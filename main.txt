@@ -1,0 +1,257 @@
+import sys
+import datetime
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QLabel, QPushButton,
+    QInputDialog, QTableWidget, QTableWidgetItem, QMessageBox, QCheckBox, QDialog
+)
+from PyQt5.QtGui import QColor
+from PyQt5.QtCore import Qt
+import pandas as pd
+class AttendanceTracker:
+    def _init_(self, total_days=0, days_attended=0):
+        self.total_days = total_days
+        self.days_attended = days_attended
+
+    def calculate_percentage(self):
+        return (self.days_attended / max(1, self.total_days)) * 100
+
+    def record_attendance(self, total_days, days_attended):
+        self.total_days += total_days
+        self.days_attended += days_attended
+
+    def plot_attendance(self):
+        labels = ['Attended', 'Missed']
+        sizes = [self.days_attended, max(0, self.total_days - self.days_attended)]
+        colors = [QColor('#66b3ff'), QColor('#99ff99')]
+
+        # Create a Matplotlib figure and plot
+        fig, ax = plt.subplots()
+        ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', shadow=True, startangle=140)
+        ax.axis('equal')
+        ax.set_title("Attendance Percentage")
+
+        # Embed the Matplotlib plot into PyQt using FigureCanvasQTAgg
+        canvas = FigureCanvas(fig)
+        canvas.setGeometry(100, 100, 400, 400)
+
+        # Create a QDialog to show the Matplotlib plot
+        dialog = QDialog()
+        dialog.setWindowTitle("Attendance Percentage")
+        dialog.setGeometry(100, 100, 400, 400)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(canvas)
+        dialog.setLayout(layout)
+
+        # Show the QDialog
+        dialog.exec_()
+
+class StudyPlannerBotApp(QWidget):
+    def _init_(self):
+        super()._init_()
+
+        self.tasks = pd.DataFrame(columns=["Task", "Deadline", "Completed"])
+        self.attendance_tracker = AttendanceTracker()
+
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowTitle('Study Planner Bot')
+        self.setGeometry(100, 100, 800, 600)
+
+        self.task_table = QTableWidget(self)
+        self.task_table.setColumnCount(3)
+        self.task_table.setHorizontalHeaderLabels(["Task", "Deadline", "Completed"])
+
+        # Set up the layout
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.create_header_label())
+        layout.addWidget(self.task_table)
+
+        # Add buttons individually
+        for button in self.create_button_layout():
+            layout.addWidget(button)
+
+        # Add Exit button
+        exit_button = QPushButton('Exit', self)
+        exit_button.clicked.connect(self.exit_program)
+        exit_button.setStyleSheet('background-color: #FF0000; color: #fff; font-size: 12px; padding: 5px; border: none;')
+        layout.addWidget(exit_button)
+
+        # Set the layout for the main widget
+        self.setLayout(layout)
+
+    def create_header_label(self):
+        header_label = QLabel('Study Planner Bot')
+        header_label.setAlignment(Qt.AlignCenter)
+        header_label.setStyleSheet('font-size: 20px; font-weight: bold; color: #333;')
+        return header_label
+
+    def create_button_layout(self):
+        buttons = []
+
+        buttons.append(self.create_button('Add Task', self.show_add_task_dialog, '#4CAF50'))
+        buttons.append(self.create_button('Edit Task', self.show_edit_task_dialog, '#2196F3'))
+        buttons.append(self.create_button('Mark as Completed', self.mark_task_as_completed, '#FFC107'))
+        buttons.append(self.create_button('Remove Task', self.remove_task, '#F44336'))
+        buttons.append(self.create_button('View Upcoming Tasks', self.view_upcoming_tasks, '#673AB7'))
+        buttons.append(self.create_button('View Missed Tasks', self.view_missed_deadline_tasks, '#FF5722'))
+        buttons.append(self.create_button('View Completed Tasks', self.view_completed_tasks, '#8BC34A'))
+        buttons.append(self.create_button('Show Percentage by Subjects', self.show_percentage_by_subjects, '#E91E63'))
+        buttons.append(self.create_button('Show Attendance', self.show_attendance, '#795548'))
+
+        return buttons
+
+    def create_button(self, text, function, color):
+        button = QPushButton(text, self)
+        button.clicked.connect(function)
+        button.setStyleSheet(f'background-color: {color}; color: #fff; font-size: 12px; padding: 5px; border: none;')
+        return button
+
+    def show_add_task_dialog(self):
+        task, ok = QInputDialog.getText(self, 'Add Task', 'Enter the task:')
+        if ok:
+            deadline_str, ok = QInputDialog.getText(self, 'Add Task', 'Enter the deadline (YYYY-MM-DD HH:MM):')
+            if ok:
+                self.add_task(task, deadline_str)
+
+    def show_edit_task_dialog(self):
+        row = self.task_table.currentRow()
+        if row >= 0:
+            task_name = self.task_table.item(row, 0).text()
+            new_deadline_str, ok = QInputDialog.getText(self, 'Edit Task', f'Enter the new deadline for {task_name} (YYYY-MM-DD HH:MM):')
+            if ok:
+                self.edit_task(row, new_deadline_str)
+
+    def add_task(self, task, deadline_str):
+        try:
+            deadline = pd.to_datetime(deadline_str, format='%Y-%m-%d %H:%M')
+        except ValueError:
+            self.show_error_dialog('Invalid Deadline', 'Invalid deadline format. Please use the format \'YYYY-MM-DD HH:MM\'.')
+            return
+
+        new_task = pd.DataFrame({"Task": [task], "Deadline": [deadline], "Completed": [False]})
+        self.tasks = pd.concat([self.tasks, new_task], ignore_index=True)
+        self.update_task_table()
+
+    def edit_task(self, row, new_deadline_str):
+        try:
+            new_deadline = pd.to_datetime(new_deadline_str, format='%Y-%m-%d %H:%M')
+            self.tasks.at[row, "Deadline"] = new_deadline
+            self.update_task_table()
+        except ValueError:
+            self.show_error_dialog('Invalid Deadline', 'Invalid deadline format. Please use the format \'YYYY-MM-DD HH:MM\'.')
+
+    def mark_task_as_completed(self):
+        row = self.task_table.currentRow()
+        if row >= 0:
+            task_name = self.task_table.item(row, 0).text()
+            confirm, ok = QInputDialog.getText(self, 'Mark as Completed', f'Are you sure you want to mark {task_name} as completed? (y/n)')
+            if ok and confirm.lower() == 'y':
+                self.tasks.at[row, "Completed"] = True
+                self.update_task_table()
+
+    def remove_task(self):
+        row = self.task_table.currentRow()
+        if row >= 0:
+            task_name = self.task_table.item(row, 0).text()
+            confirm, ok = QInputDialog.getText(self, 'Remove Task', f'Are you sure you want to remove {task_name}? (y/n)')
+            if ok and confirm.lower() == 'y':
+                self.tasks = self.tasks.drop(index=row).reset_index(drop=True)
+                self.update_task_table()
+
+    def view_upcoming_tasks(self):
+        upcoming_tasks = self.tasks[self.tasks["Deadline"] > datetime.datetime.now()]
+        self.show_info_dialog("Upcoming Tasks", upcoming_tasks)
+
+    def view_missed_deadline_tasks(self):
+        missed_tasks = self.tasks[(self.tasks["Deadline"] < datetime.datetime.now()) & (~self.tasks["Completed"])]
+        self.show_info_dialog("Missed Deadline Tasks", missed_tasks)
+
+    def view_completed_tasks(self):
+        completed_tasks = self.tasks[self.tasks["Completed"]]
+        self.show_info_dialog("Completed Tasks", completed_tasks)
+
+    def show_info_dialog(self, title, data_frame):
+        message_box = QMessageBox(self)
+        message_box.setWindowTitle(title)
+        if data_frame.empty:
+            message_box.setText("No tasks to display.")
+        else:
+            message_box.setText(data_frame.to_string(index=False))
+        message_box.exec_()
+
+    def show_percentage_by_subjects(self):
+        subject_marks = self.get_subject_marks()
+        self.calculate_percentage(subject_marks)
+
+    def show_attendance(self):
+        total_days, ok = QInputDialog.getInt(self, 'Attendance', 'Enter the total number of days:')
+        if ok:
+            days_attended, ok = QInputDialog.getInt(self, 'Attendance', 'Enter the total number of days attended:')
+            if ok and 0 < days_attended <= total_days:
+                self.attendance_tracker.record_attendance(total_days, days_attended)
+                percentage = self.attendance_tracker.calculate_percentage()
+                attendance_df = pd.DataFrame({"Attendance Percentage": [percentage]})
+                self.show_info_dialog('Attendance Percentage', attendance_df)
+                self.attendance_tracker.plot_attendance()
+            else:
+                self.show_error_dialog('Invalid Input', 'Invalid input. Please enter valid values.')
+
+    def get_subject_marks(self):
+        subject_marks = []
+        num_subjects, ok = QInputDialog.getInt(self, 'Subjects', 'Enter the number of subjects:')
+        if ok:
+            for i in range(1, num_subjects + 1):
+                marks, ok = QInputDialog.getDouble(self, f'Subject {i}', f'Enter marks for subject {i}:')
+                if ok:
+                    subject_marks.append(marks)
+                else:
+                    return []  # User canceled input
+        return subject_marks
+
+    def calculate_percentage(self, subject_marks):
+        total_subjects = len(subject_marks)
+        if total_subjects == 0:
+            self.show_info_dialog('No Subjects', 'No subjects entered.')
+            return
+
+        total_marks = sum(subject_marks)
+        percentage = (total_marks / max(1, total_subjects * 100)) * 100
+        self.show_info_dialog('Percentage', pd.DataFrame({"Percentage": [percentage]}))
+
+    def show_error_dialog(self, title, message):
+        error_box = QMessageBox(self)
+        error_box.setIcon(QMessageBox.Critical)
+        error_box.setWindowTitle(title)
+        error_box.setText(message)
+        error_box.exec_()
+
+    def update_task_table(self):
+        self.task_table.setRowCount(0)
+        for i, (task, deadline, completed) in enumerate(zip(self.tasks['Task'], self.tasks['Deadline'], self.tasks['Completed'])):
+            self.task_table.insertRow(i)
+            self.task_table.setItem(i, 0, QTableWidgetItem(task))
+            self.task_table.setItem(i, 1, QTableWidgetItem(str(deadline)))
+            completed_checkbox = QCheckBox()
+            completed_checkbox.setChecked(completed)
+            completed_checkbox.stateChanged.connect(self.toggle_completion)
+            self.task_table.setCellWidget(i, 2, completed_checkbox)
+            edit_button = QPushButton('Edit')
+            edit_button.clicked.connect(lambda _, row=i: self.show_edit_task_dialog(row))
+            self.task_table.setCellWidget(i, 3, edit_button)
+
+    def toggle_completion(self):
+        checkbox = self.sender()
+        row = self.task_table.indexAt(checkbox.pos()).row()
+        self.tasks.at[row, "Completed"] = checkbox.isChecked()
+
+    def exit_program(self):
+        sys.exit()
+
+if _name_ == '_main_':
+    app = QApplication(sys.argv)
+    study_bot_app = StudyPlannerBotApp()
+    study_bot_app.show()
+    sys.exit(app.exec_())
